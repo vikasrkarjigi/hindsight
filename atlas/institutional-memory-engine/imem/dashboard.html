@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Institutional Memory Engine</title>
+<style>
+  :root{
+    --bg:#001322; --panel:#062b3b; --panel2:#04202d; --line:#0e4055;
+    --ink:#e8f5ef; --dim:#8fb3ad; --green:#00ED64; --green2:#00684A;
+    --amber:#FFC010; --red:#FF6960;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+  header{padding:20px 28px;border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+    background:linear-gradient(90deg,#04202d,#001322)}
+  h1{font-size:19px;margin:0;letter-spacing:-.02em}
+  h1 b{color:var(--green)}
+  .pill{font:12px var(--mono);border:1px solid var(--line);border-radius:999px;
+    padding:4px 11px;color:var(--dim);background:#00192b}
+  .pill.live{color:var(--green);border-color:var(--green2)}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;
+    background:var(--green);margin-right:6px;animation:p 1.6s infinite}
+  @keyframes p{0%,100%{opacity:1}50%{opacity:.25}}
+  main{display:grid;grid-template-columns:1.15fr .85fr;gap:18px;padding:18px 28px 40px}
+  @media(max-width:1000px){main{grid-template-columns:1fr}}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .card>h2{margin:0;font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--dim);padding:13px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+  .pad{padding:16px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:10px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:9px;padding:11px 13px}
+  .stat .n{font:600 24px var(--mono);color:var(--green)}
+  .stat .k{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.08em}
+  #feed{max-height:300px;overflow:auto;font:12.5px var(--mono)}
+  .ev{padding:9px 16px;border-bottom:1px solid #072e3f;display:flex;gap:10px;
+    animation:in .45s ease}
+  @keyframes in{from{background:#0b5a3a;opacity:0}to{background:transparent;opacity:1}}
+  .ev .t{color:var(--green);min-width:118px}
+  .ev .x{color:var(--red)}
+  select,textarea,input,button{font:inherit;border-radius:8px;border:1px solid var(--line);
+    background:#00192b;color:var(--ink);padding:9px 11px}
+  textarea{width:100%;min-height:92px;font:13px var(--mono);resize:vertical}
+  button{background:var(--green);color:#00231a;font-weight:650;border:0;cursor:pointer;padding:10px 18px}
+  button:hover{filter:brightness(1.08)}
+  .row{display:flex;gap:9px;margin-bottom:10px;flex-wrap:wrap}
+  #out{white-space:pre-wrap;font:12.5px var(--mono);max-height:430px;overflow:auto;
+    background:#00121f;border-radius:8px;padding:14px;border:1px solid var(--line)}
+  .hit{border-left:3px solid var(--green);background:var(--panel);padding:11px 13px;
+    border-radius:0 8px 8px 0;margin-bottom:10px}
+  .hit.warn{border-left-color:var(--red)}
+  .hit .h{font-weight:650;margin-bottom:4px}
+  .hit .m{font:11.5px var(--mono);color:var(--dim)}
+  .hit .e{color:#bcd8d1;font-size:13.5px;margin-top:7px;white-space:pre-wrap}
+  .badge{display:inline-block;font:11px var(--mono);padding:2px 8px;border-radius:999px;
+    background:var(--green2);color:#dffff0;margin-right:6px}
+  .badge.r{background:#5c1a17;color:#ffd7d4}
+  .badge.a{background:#5a4400;color:#ffe9b0}
+</style>
+</head>
+<body>
+<header>
+  <h1>🧠 Institutional <b>Memory Engine</b></h1>
+  <span class="pill live"><span class="dot"></span>change stream live</span>
+  <span class="pill" id="p-coll">events</span>
+  <span class="pill" id="p-emb">…</span>
+  <span class="pill">1 collection · 1 vector index</span>
+</header>
+
+<main>
+  <section style="display:flex;flex-direction:column;gap:18px">
+    <div class="card">
+      <h2>Memory loaded</h2>
+      <div class="pad"><div class="stats" id="stats"></div></div>
+    </div>
+    <div class="card">
+      <h2>Ask the memory</h2>
+      <div class="pad">
+        <div class="row">
+          <select id="tool">
+            <option value="check_bug">check_bug — closest prior fix</option>
+            <option value="review_pr">review_pr — reintroduced revert?</option>
+            <option value="explain">explain — why is it like this</option>
+            <option value="precedent">precedent — already decided?</option>
+            <option value="page_owner">page_owner — who to page</option>
+            <option value="who_knows">who_knows — people index</option>
+            <option value="contradictions">contradictions — conflicting decisions</option>
+          </select>
+          <button onclick="run()">Run</button>
+        </div>
+        <textarea id="q">TimeoutError: pool timed out waiting for connection, ECONNRESET spike on checkout</textarea>
+        <div id="cards" style="margin-top:14px"></div>
+        <details style="margin-top:10px"><summary style="cursor:pointer;color:var(--dim);font-size:13px">raw JSON</summary>
+          <div id="out" style="margin-top:8px">—</div></details>
+      </div>
+    </div>
+  </section>
+
+  <section style="display:flex;flex-direction:column;gap:18px">
+    <div class="card">
+      <h2>Live ingest — MongoDB change stream</h2>
+      <div id="feed"><div class="ev"><span class="t">waiting…</span><span>run the ingester to watch memory land in real time</span></div></div>
+    </div>
+    <div class="card">
+      <h2>Presets</h2>
+      <div class="pad" id="presets"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const PRESETS = {
+  check_bug: "TimeoutError: pool timed out waiting for connection, ECONNRESET spike on checkout",
+  review_pr: `diff --git a/lib/http/retry.js b/lib/http/retry.js
+--- a/lib/http/retry.js
++++ b/lib/http/retry.js
+@@ -12,6 +12,14 @@
++  async requestWithRetry(fn) {
++    for (let attempt = 0; attempt < 3; attempt++) {
++      try { return await fn() }
++      catch (err) { await sleep(200) }   // retry every 200ms
++    }
++  }`,
+  explain: "the body parser middleware ordering",
+  precedent: "Let's split the monolith into microservices so teams can deploy independently",
+  page_owner: "prod is throwing 502s, cache hit rate collapsed right after the deploy",
+  who_knows: "lib/http/retry.js",
+  contradictions: "adding an ORM layer"
+};
+const sel = document.getElementById('tool'), qEl = document.getElementById('q');
+sel.onchange = () => qEl.value = PRESETS[sel.value] || '';
+document.getElementById('presets').innerHTML = Object.entries(PRESETS)
+  .map(([k,v])=>`<div style="margin-bottom:8px"><span class="badge">${k}</span>
+     <span style="color:var(--dim);font:12px var(--mono)">${v.split('\n')[0].slice(0,58)}</span></div>`).join('');
+
+async function j(u,o){const r=await fetch(u,o);return r.json()}
+
+function esc(s){return String(s??'').replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}
+function hitCard(h, warn){
+  return `<div class="hit${warn?' warn':''}">
+    <div class="h">${esc(h.title)}</div>
+    <div class="m">${esc(h.type)} · ${esc(h.author)} · ${esc(h.date)} · score ${h.score}
+      ${h.reverted?'<span class="badge r">reverted</span>':''}</div>
+    ${h.excerpt?`<div class="e">${esc(h.excerpt).slice(0,420)}</div>`:''}</div>`;
+}
+
+async function run(){
+  const tool = sel.value, v = qEl.value;
+  const body = tool==='review_pr' ? {diff:v,title:'Add retry logic to payment client'} : {query:v,error:v};
+  document.getElementById('cards').innerHTML = '<div class="m" style="color:var(--dim)">searching memory…</div>';
+  const r = await j('/tools/'+tool,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+  document.getElementById('out').textContent = JSON.stringify(r,null,2);
+  let html='';
+  if(r.closest_fix){html+=`<div class="badge">closest prior fix — ask ${esc(r.closest_fix.ask)}</div>`+hitCard(r.closest_fix);}
+  if(r.revert_warnings){
+    html+=`<div class="badge ${r.risk==='high'?'r':'a'}">risk: ${r.risk}</div><div style="margin:8px 0">${esc(r.summary)}</div>`;
+    r.revert_warnings.forEach(w=>{html+=`<div style="color:var(--red);font-size:13px;margin-bottom:4px">⚠ ${esc(w.why)}</div>`+hitCard(w.prior,true)});
+  }
+  (r.reasoning||r.prior_art||r.also_relevant||[]).forEach(h=>html+=hitCard(h));
+  if(r.page){html+=`<div class="badge">page ${esc(r.page.name||r.page.login)}</div>
+     <div style="margin:6px 0 10px">${esc(r.rationale)}</div>`;
+     if(r.closest_incident) html+=hitCard(r.closest_incident);}
+  if(r.experts){html+=r.experts.map(e=>`<div class="hit"><div class="h">${esc(e.name||e.login)}</div>
+     <div class="m">${e.touches} touches · last ${esc(e.last_touch)}</div></div>`).join('');}
+  if(r.contradiction_detected!==undefined){html+=`<div class="badge ${r.contradiction_detected?'r':''}">${esc(r.headline)}</div>`;
+     (r.for||[]).concat(r.against||[]).forEach(s=>html+=hitCard(s.doc, s.stance==='against'));}
+  document.getElementById('cards').innerHTML = html || '<div style="color:var(--dim)">no results</div>';
+}
+
+function renderStats(s){
+  document.getElementById('p-emb').textContent = `${s.embedding_provider} · ${s.dimensions}d`;
+  const cells = [['total',s.total_events], ...Object.entries(s.by_type||{})];
+  document.getElementById('stats').innerHTML = cells.map(([k,n])=>
+    `<div class="stat"><div class="n">${n}</div><div class="k">${k.replace(/_/g,' ')}</div></div>`).join('');
+}
+j('/stats').then(renderStats).catch(()=>{});
+
+const es = new EventSource('/stream');
+es.addEventListener('stats', e=>renderStats(JSON.parse(e.data)));
+es.addEventListener('memory', e=>{
+  const d = JSON.parse(e.data), f = document.getElementById('feed');
+  if(f.dataset.clean!=='1'){f.innerHTML='';f.dataset.clean='1';}
+  const row = document.createElement('div');
+  row.className='ev';
+  row.innerHTML = `<span class="t">${esc(d.type)}</span><span class="${d.reverted?'x':''}">${esc(d.title)}</span>`;
+  f.prepend(row);
+  while(f.children.length>60) f.lastChild.remove();
+  j('/stats').then(renderStats).catch(()=>{});
+});
+</script>
+</body>
+</html>

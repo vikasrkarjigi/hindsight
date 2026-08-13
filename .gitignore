@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Zip artifacts / macOS metadata from extraction
+__MACOSX/
+*.zip
+
+# OS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
