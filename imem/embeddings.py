@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import time
 from typing import List, Sequence
 
 from . import config
@@ -26,12 +27,76 @@ _VOYAGE_DIMS = {
 _FALLBACK_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 _FALLBACK_DIMS = 384
 
+# A Voyage account with no payment method on file is capped at 3 requests/min
+# and 10K tokens/min (not the standard tier's limits). We stay comfortably
+# under both rather than assume a paid account, so ingestion never hard-fails
+# the way it did with the SDK's default max_retries=0.
+_VOYAGE_MAX_TOKENS_PER_REQUEST = 6000
+_VOYAGE_MIN_SECONDS_BETWEEN_REQUESTS = 21.0
+_voyage_last_request_at = 0.0
+
 
 @functools.lru_cache(maxsize=1)
 def _voyage_client():
     import voyageai
 
-    return voyageai.Client(api_key=config.VOYAGE_API_KEY)
+    # max_retries=0: we do our own pacing + backoff below, tuned for the
+    # free-tier rate limit rather than the SDK's generic exponential jitter.
+    return voyageai.Client(api_key=config.VOYAGE_API_KEY, max_retries=0)
+
+
+def _estimate_tokens(text: str) -> int:
+    return max(1, len(text) // 4)
+
+
+def _voyage_chunks(texts: List[str]) -> List[List[str]]:
+    """Group texts into request-sized batches by estimated token count, not
+    just item count — a 64-item batch of long diffs can be 10x the token cap
+    even though it's well under Voyage's 128-item batch limit."""
+    chunks: List[List[str]] = []
+    current: List[str] = []
+    current_tokens = 0
+    for t in texts:
+        tok = _estimate_tokens(t)
+        if current and (
+            current_tokens + tok > _VOYAGE_MAX_TOKENS_PER_REQUEST or len(current) >= 96
+        ):
+            chunks.append(current)
+            current, current_tokens = [], 0
+        current.append(t)
+        current_tokens += tok
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _voyage_embed_chunk(client, chunk: List[str], input_type: str) -> List[List[float]]:
+    global _voyage_last_request_at
+    import voyageai.error as verror
+
+    for attempt in range(6):
+        wait = _voyage_last_request_at + _VOYAGE_MIN_SECONDS_BETWEEN_REQUESTS - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            resp = client.embed(chunk, model=config.VOYAGE_MODEL, input_type=input_type)
+            _voyage_last_request_at = time.time()
+            return resp.embeddings
+        except verror.RateLimitError:
+            _voyage_last_request_at = time.time()
+            backoff = min(20 * (attempt + 1), 90)
+            log.warning(
+                "Voyage rate limit hit (free tier without a payment method is "
+                "3 req/min, 10K tokens/min) — backing off %ss (attempt %d/6)",
+                backoff,
+                attempt + 1,
+            )
+            time.sleep(backoff)
+    raise RuntimeError(
+        "Voyage rate limit exceeded after repeated backoff. Add a payment method at "
+        "https://dashboard.voyageai.com/ for standard limits, or unset VOYAGE_API_KEY "
+        "to use local fallback embeddings."
+    )
 
 
 @functools.lru_cache(maxsize=1)
@@ -62,11 +127,11 @@ def embed(texts: Sequence[str], input_type: str = "document") -> List[List[float
     if provider() == "voyage":
         client = _voyage_client()
         out: List[List[float]] = []
-        # Voyage caps batch size; 96 is comfortably inside every tier's limit.
-        for i in range(0, len(texts), 96):
-            chunk = [t[:8000] for t in texts[i : i + 96]]
-            resp = client.embed(chunk, model=config.VOYAGE_MODEL, input_type=input_type)
-            out.extend(resp.embeddings)
+        chunks = _voyage_chunks([t[:8000] for t in texts])
+        for i, chunk in enumerate(chunks):
+            out.extend(_voyage_embed_chunk(client, chunk, input_type))
+            if len(chunks) > 1:
+                log.info("  voyage embed batch %d/%d (%d texts)", i + 1, len(chunks), len(chunk))
         return out
 
     model = _fallback_model()
