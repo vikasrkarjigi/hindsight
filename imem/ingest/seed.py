@@ -65,6 +65,57 @@ def seed_events(repo: str | None = None) -> List[Dict[str, Any]]:
         meta={"source": "seed", "severity": "SEV2", "duration_minutes": 12},
     ))
 
+    # The pair below is what makes `review_pr` land: a change that shipped, caused
+    # the SEV1 above, and was backed out. `reverted=True` on a `commit` is exactly
+    # the filter review_pr pushes down into the vector index.
+    S.append(make_event(
+        type="commit",
+        external_id="seed:commit:fixed-interval-retry",
+        title="Add fixed-interval retry to the payment client",
+        body=(
+            "Wraps the payment client call in a simple 3x retry with a fixed 200ms sleep "
+            "between attempts so transient downstream failures stop surfacing to users. "
+            "No jitter and no retry budget — kept deliberately simple."
+        ),
+        repo=repo, author={"login": "newgrad", "name": "Sam Okafor"}, ts=_ago(220),
+        files=["lib/http/retry.js", "lib/payments/client.js"],
+        url="https://github.com/example/repo/commit/9f2c1ab",
+        diff=(
+            "--- a/lib/http/retry.js\n"
+            "+++ b/lib/http/retry.js\n"
+            "@@ -12,6 +12,14 @@ class PaymentClient {\n"
+            "+  async requestWithRetry(fn) {\n"
+            "+    for (let attempt = 0; attempt < 3; attempt++) {\n"
+            "+      try { return await fn() }\n"
+            "+      catch (err) {\n"
+            "+        // retry every 200ms, three times\n"
+            "+        await sleep(200)\n"
+            "+      }\n"
+            "+    }\n"
+            "+  }\n"
+        ),
+        reverted=True,
+        meta={"source": "seed", "sha": "9f2c1ab"},
+    ))
+
+    S.append(make_event(
+        type="commit",
+        external_id="seed:commit:revert-fixed-interval-retry",
+        title='Revert "Add fixed-interval retry to the payment client"',
+        body=(
+            "This reverts commit 9f2c1ab. The fixed 200ms interval synchronised every "
+            "client's retries into a thundering herd; during a downstream slowdown it "
+            "multiplied request volume ~6x and exhausted the connection pool (SEV1, 43 "
+            "minutes of checkout 5xx). Do not re-land retries here without full jitter "
+            "and a retry budget."
+        ),
+        repo=repo, author={"login": "priya-n", "name": "Priya Nair"}, ts=_ago(214),
+        files=["lib/http/retry.js", "lib/payments/client.js"],
+        url="https://github.com/example/repo/commit/4d81e77",
+        reverts="9f2c1ab",
+        meta={"source": "seed", "sha": "4d81e77", "is_revert": True},
+    ))
+
     S.append(make_event(
         type="architecture_decision",
         external_id="seed:adr:0007-no-orm",
@@ -181,10 +232,20 @@ def seed_events(repo: str | None = None) -> List[Dict[str, Any]]:
 
 def load_seed(repo: str | None = None) -> Dict[str, Any]:
     docs = seed_events(repo)
-    vectors = embeddings.embed([d["text"] for d in docs], input_type="document")
-    ops = []
-    for d, v in zip(docs, vectors):
+    reusable = db.existing_embeddings(docs)
+    fresh = [d for d in docs if d["external_id"] not in reusable]
+    vectors = embeddings.embed([d["text"] for d in fresh], input_type="document") if fresh else []
+    for d, v in zip(fresh, vectors):
         d["embedding"] = v
-        ops.append(UpdateOne({"external_id": d["external_id"]}, {"$set": d}, upsert=True))
+    for d in docs:
+        if d["external_id"] in reusable:
+            d["embedding"] = reusable[d["external_id"]]
+
+    ops = [UpdateOne({"external_id": d["external_id"]}, {"$set": d}, upsert=True) for d in docs]
     db.events().bulk_write(ops, ordered=False)
-    return {"seeded": len(ops), "types": sorted({d["type"] for d in docs})}
+    return {
+        "seeded": len(ops),
+        "embedded": len(fresh),
+        "reused": len(reusable),
+        "types": sorted({d["type"] for d in docs}),
+    }

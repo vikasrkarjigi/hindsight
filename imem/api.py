@@ -117,5 +117,9 @@ async def stream():
                 yield f"event: memory\ndata: {json.dumps(payload, default=str)}\n\n"
         except Exception as e:  # noqa: BLE001
             yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+        finally:
+            # Browser refreshes close the generator; without this each one leaks a
+            # change stream (and the thread blocked on it) for the process lifetime.
+            cursor.close()
 
     return StreamingResponse(gen(), media_type="text/event-stream")

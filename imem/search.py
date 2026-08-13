@@ -4,10 +4,13 @@ Every one of the five MCP tools is a thin wrapper over `recall()`.
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 from . import config, db, embeddings
+
+log = logging.getLogger(__name__)
 
 
 def _filter(types: Optional[Sequence[str]], repo: Optional[str], extra: Optional[dict]) -> dict:
@@ -71,8 +74,9 @@ def text_search(
     ]
     try:
         return list(db.events().aggregate(pipeline))
-    except Exception:
+    except Exception as e:  # noqa: BLE001
         # Lexical index may still be building; hybrid degrades to pure vector.
+        log.warning("lexical search unavailable, falling back to pure vector: %s", e)
         return []
 
 

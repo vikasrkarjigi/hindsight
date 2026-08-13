@@ -148,6 +148,7 @@ def build_events(repo: str, commits, pulls, comments) -> List[Dict[str, Any]]:
         )
         sha = c.get("sha", "")
         is_reverted = sha[:7] in reverted_shas or title.strip().lower() in reverted_titles
+        reverts_match = REVERT_SHA_RE.search(msg)
 
         events.append(
             make_event(
@@ -162,7 +163,7 @@ def build_events(repo: str, commits, pulls, comments) -> List[Dict[str, Any]]:
                 url=c.get("html_url", ""),
                 diff=diff,
                 reverted=is_reverted,
-                reverts=REVERT_SHA_RE.search(msg).group(1) if REVERT_SHA_RE.search(msg) else None,
+                reverts=reverts_match.group(1) if reverts_match else None,
                 meta={"sha": sha, "stats": c.get("stats", {}), "is_revert": msg.lower().startswith("revert")},
             )
         )
@@ -210,16 +211,24 @@ def build_events(repo: str, commits, pulls, comments) -> List[Dict[str, Any]]:
     return events
 
 
-def embed_and_upsert(events: List[Dict[str, Any]], batch: int = 64) -> int:
+def embed_and_upsert(events: List[Dict[str, Any]], batch: int = 25) -> int:
     col = db.events()
+    reusable = db.existing_embeddings(events)
+    if reusable:
+        log.info("  reusing %d existing embeddings (unchanged since last ingest)", len(reusable))
+
     written = 0
     for i in range(0, len(events), batch):
         chunk = events[i : i + batch]
-        vectors = embeddings.embed([e["text"] for e in chunk], input_type="document")
-        ops = []
-        for e, v in zip(chunk, vectors):
+        fresh = [e for e in chunk if e["external_id"] not in reusable]
+        vectors = embeddings.embed([e["text"] for e in fresh], input_type="document") if fresh else []
+        for e, v in zip(fresh, vectors):
             e["embedding"] = v
-            ops.append(UpdateOne({"external_id": e["external_id"]}, {"$set": e}, upsert=True))
+        for e in chunk:
+            if e["external_id"] in reusable:
+                e["embedding"] = reusable[e["external_id"]]
+
+        ops = [UpdateOne({"external_id": e["external_id"]}, {"$set": e}, upsert=True) for e in chunk]
         col.bulk_write(ops, ordered=False)
         written += len(ops)
         log.info("  embedded + upserted %d/%d", written, len(events))

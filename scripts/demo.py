@@ -149,6 +149,10 @@ def main() -> int:
     ))
 
     which = sys.argv[1:] or list(DEMOS)
+    unknown = [n for n in which if n not in DEMOS]
+    if unknown:
+        c.print(f"[red]unknown demo(s): {', '.join(unknown)}[/]  — choose from: {', '.join(DEMOS)}")
+        return 2
     for name in which:
         DEMOS[name]()
         time.sleep(0.3)

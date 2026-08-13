@@ -43,6 +43,29 @@ def ping() -> dict:
     }
 
 
+def existing_embeddings(docs) -> dict:
+    """Vectors we can reuse: same external_id AND identical embedded text.
+
+    Embedding is the only slow, rate-limited, billable step of an ingest, so
+    re-running the ingester should cost nothing for history already loaded.
+    """
+    ids = [d["external_id"] for d in docs]
+    if not ids:
+        return {}
+    cached = {
+        doc["external_id"]: (doc.get("text", ""), doc["embedding"])
+        for doc in events().find(
+            {"external_id": {"$in": ids}, "embedding": {"$exists": True}},
+            {"external_id": 1, "text": 1, "embedding": 1},
+        )
+    }
+    return {
+        d["external_id"]: cached[d["external_id"]][1]
+        for d in docs
+        if d["external_id"] in cached and cached[d["external_id"]][0] == d["text"]
+    }
+
+
 # ── index bootstrap ──────────────────────────────────────────────────────────
 
 def vector_index_definition() -> dict:

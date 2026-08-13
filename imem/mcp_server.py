@@ -12,13 +12,16 @@ import json
 import logging
 from typing import Optional
 
-from mcp.server.fastmcp import FastMCP
+try:  # mcp >= 2.0 renamed the high-level server
+    from mcp.server import MCPServer as _Server
+except ImportError:  # mcp 1.x
+    from mcp.server.fastmcp import FastMCP as _Server
 
 from . import tools
 
 logging.basicConfig(level=logging.INFO)
 
-mcp = FastMCP("institutional-memory")
+mcp = _Server("institutional-memory")
 
 
 def _j(obj) -> str:

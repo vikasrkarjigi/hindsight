@@ -41,9 +41,17 @@ aggregation and the streaming. That's the pitch.
 
 ### 2. Voyage AI key
 
-<https://dashboard.voyageai.com> → sign up → **API Keys → Create**. Free tier is far
-more than enough. *(If you skip this, the app automatically falls back to a local
-embedding model so the demo can never hard-fail — but Voyage is the better story.)*
+<https://dashboard.voyageai.com> → sign up → **API Keys → Create**.
+
+⚠️ **Add a payment method before you ingest.** Without one, Voyage caps the key at
+**3 requests/min and 10K tokens/min**, which turns a 350-event ingest into a ~45-minute
+crawl. The 200M free tokens still apply once a card is on file, so this costs nothing —
+it just removes the throttle. The ingester detects the 429s and paces itself either way,
+so it will finish regardless, just slowly.
+
+*(If you skip the key entirely, the app falls back to a local embedding model so the demo
+can never hard-fail — that path needs `pip install sentence-transformers`, which is not in
+`requirements.txt` because it pulls torch.)*
 
 ### 3. GitHub token (30 seconds, big payoff)
 
@@ -101,9 +109,9 @@ Bonus: `who_knows` (people-index), `contradictions` (conflicting decisions), `me
 {
   "mcpServers": {
     "institutional-memory": {
-      "command": "/absolute/path/to/.venv/bin/python",
+      "command": "/absolute/path/to/hindsight/.venv/bin/python",
       "args": ["-m", "imem.mcp_server"],
-      "cwd": "/absolute/path/to/atlas-imem"
+      "cwd": "/absolute/path/to/hindsight"
     }
   }
 }
@@ -150,7 +158,19 @@ scripts/
   setup_atlas.py   one command to make Atlas ready
   run_ingest.py    load the memory
   demo.py          the on-camera demo
+  mcp_smoke.py     protocol-level check that the MCP surface really works
 ```
+
+## Verify it before you record
+
+```bash
+python scripts/mcp_smoke.py          # tools/list + memory_stats over real stdio MCP
+python scripts/mcp_smoke.py --full   # calls all eight tools end-to-end
+curl -s localhost:8000/health        # Atlas reachable, embedding provider, event count
+```
+
+Re-running `run_ingest.py` is cheap: documents whose text has not changed keep their
+existing vector, so only genuinely new history is sent to the embedding API.
 
 ## Troubleshooting
 
