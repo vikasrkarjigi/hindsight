@@ -117,15 +117,32 @@ def recall(
     hybrid: bool = True,
     decay: bool = True,
 ) -> List[Dict[str, Any]]:
-    """The one retrieval call the whole product sits on."""
+    """The one retrieval call the whole product sits on.
+
+    Decay is applied to each ranking BEFORE fusion, never after. RRF deliberately
+    throws away score magnitude — every fused score lands between 1/61 and 1/75 —
+    so a multiplicative decay applied to fused scores swamps relevance entirely and
+    a recent dependency bump outranks the postmortem that actually answers the
+    question. Decaying first lets recency reorder each ranking, which is where it
+    is meaningful, and leaves fusion to do its job.
+    """
     pool = max(k * 3, 15)
-    vec_hits = vector_search(query, k=pool, types=types, repo=repo, extra_filter=extra_filter)
-    if hybrid:
-        lex_hits = text_search(query, k=pool, types=types)
-        docs = _rrf([vec_hits, lex_hits]) if lex_hits else vec_hits
-    else:
-        docs = vec_hits
-    return _decay(docs, enabled=decay)[:k]
+    vec_hits = _decay(
+        vector_search(query, k=pool, types=types, repo=repo, extra_filter=extra_filter),
+        enabled=decay,
+    )
+    if not hybrid:
+        return vec_hits[:k]
+
+    lex_hits = _decay(text_search(query, k=pool, types=types), enabled=decay)
+    if extra_filter:
+        # The lexical index only maps text/title/type/files, so it cannot enforce
+        # a filter like {"reverted": True}. Without this, RRF would merge
+        # unfiltered lexical hits back in and review_pr would report changes as
+        # "previously reverted" that were never reverted at all.
+        lex_hits = [d for d in lex_hits if all(d.get(f) == v for f, v in extra_filter.items())]
+    docs = _rrf([vec_hits, lex_hits]) if lex_hits else vec_hits
+    return docs[:k]
 
 
 # ── aggregations (no embeddings needed) ──────────────────────────────────────
